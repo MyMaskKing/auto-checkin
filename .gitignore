@@ -1,0 +1,5 @@
+logs/
+.ai/
+.idea/
+node_modules/
+*.log

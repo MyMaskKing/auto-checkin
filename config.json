@@ -1,0 +1,20 @@
+{
+  "scheduleTime": "10:30",
+  "readyTimeoutSec": 90,
+  "graceCloseSec": 20,
+  "hidePollMs": 300,
+  "onRunning": "skip",
+  "toast": true,
+  "apps": {
+    "workbuddy": {
+      "exePath": "E:\\Dev_Software\\WorkBuddy\\WorkBuddy.exe",
+      "processName": "WorkBuddy.exe",
+      "cdpPort": 9222
+    },
+    "qoder": {
+      "exePath": "E:\\Dev_Software\\Qoder CN\\Qoder CN.exe",
+      "processName": "Qoder CN.exe",
+      "cdpPort": 9223
+    }
+  }
+}
