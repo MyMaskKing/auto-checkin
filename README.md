@@ -1,6 +1,6 @@
 # WorkBuddy / Qoder CN 每日无感自动签到
 
-每日定时由 Windows 任务计划静默唤起客户端 → 在客户端自身登录态内完成签到 → 退出客户端（约 1 分钟，不常驻内存）→ Windows 对话框通知结果（8 秒自动关闭）。
+每日定时由 Windows 任务计划静默唤起客户端 → 在客户端自身登录态内完成签到 → 退出客户端（约 1 分钟，不常驻内存）→ Windows 原生 toast 通知结果（WinRT 不可用时降级为 8 秒自动关闭的对话框）。
 
 > **让 AI 助手安装到新电脑**：把整个目录给对方，让其 AI 编码助手阅读项目根目录的 **`AGENTS.md`**（环境自检、安装路径探测、config 适配、验证与任务计划注册的完整执行手册）。分享时排除 `.ai/`、`logs/`。
 
@@ -51,7 +51,7 @@ powershell -ExecutionPolicy Bypass -File uninstall-task.ps1         # 卸载
 | `apps/workbuddy.js` / `apps/qoder.js` | 两个客户端适配器（定位点集中于此，升级失效时改这里） |
 | `lib/cdp.js` | 零依赖 CDP 客户端（Node 22 内置 fetch/WebSocket） |
 | `lib/win32.js`、`lib/proc.ps1`、`lib/hide-windows.ps1` | 进程快照、进程树结束、窗口隐藏守护 |
-| `toast.ps1` | 结果通知（`WScript.Shell.Popup` 对话框，8 秒自动关闭；不用 WinRT toast，未注册 AUMID 会被静默丢弃） |
+| `toast.ps1` | 结果通知：WinRT 原生 toast 优先（AUMID `AutoCheckin.Daily` 每次运行幂等自注册，未注册 AUMID 的 toast 会被静默丢弃）；失败降级 `WScript.Shell.Popup` 对话框 |
 | `config.json` | 客户端路径、CDP 端口、超时、`onRunning` 策略 |
 | `logs/YYYY-MM-DD.log` | 每日运行日志 |
 
@@ -62,4 +62,4 @@ powershell -ExecutionPolicy Bypass -File uninstall-task.ps1         # 卸载
 | 通知"登录态失效" | 手动打开对应客户端，确认登录正常后重跑 |
 | 通知"CDP 未就绪" | 本机安全软件拦截调试端口；确认端口（9222/9223）未被占用 |
 | Qoder 活动页改版导致失败 | 失败会直接报错、不会乱点；更新 `apps/qoder.js` 中的定位常量 |
-| 没收到通知 | 先看 `logs/` 末尾有无「结果：」行。弹窗由 user32 直接渲染、不受勿扰模式影响；任务仅在用户登录会话运行，锁屏/未登录时无交互桌面属正常 |
+| 没收到通知 | 先看 `logs/` 末尾有无「结果：」行。原生 toast 走通知平台（受系统通知开关/专注助手影响），被禁用时脚本自动降级中央 Popup（user32 渲染，不受勿扰影响）；任务仅在用户登录会话运行，锁屏/未登录时无交互桌面属正常 |

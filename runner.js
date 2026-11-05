@@ -56,6 +56,7 @@ function notify(title, body) {
       '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
       '-File', path.join(ROOT, 'toast.ps1'),
       '-Title', title, '-Body', body,
+      '-DisplayName', '自动签到',
     ], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let err = '';
     child.stderr.on('data', (d) => { err += d; });

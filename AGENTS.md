@@ -5,7 +5,7 @@
 
 ## 0. 这是什么
 
-Windows 上的**每日无感签到工具**：定时静默启动 WorkBuddy 与 Qoder CN 两个 Electron 客户端 → 通过 CDP（Chrome DevTools Protocol）在客户端自身登录态内领取每日积分 → 优雅退出客户端 → 弹 Windows 对话框通知结果（`WScript.Shell.Popup`，8 秒自动关闭；不用 WinRT toast——未注册 AUMID 会被通知平台静默丢弃）。零 npm 依赖（Node 内置 `fetch`/`WebSocket`），客户端全程仅存活约 30–60 秒。
+Windows 上的**每日无感签到工具**：定时静默启动 WorkBuddy 与 Qoder CN 两个 Electron 客户端 → 通过 CDP（Chrome DevTools Protocol）在客户端自身登录态内领取每日积分 → 优雅退出客户端 → 发 Windows 原生 toast 通知结果。零 npm 依赖（Node 内置 `fetch`/`WebSocket`），客户端全程仅存活约 30–60 秒。通知机制（`toast.ps1`）：优先 WinRT 原生 toast，使用脚本每次运行在 `HKCU:\Software\Classes\AppUserModelId\AutoCheckin.Daily` 幂等自注册的 unpackaged AUMID（**未注册 AUMID 发出的 toast 会被通知平台静默丢弃**，不报错、退出码 0）；WinRT 不可用或 `Notifier.Setting` 非 Enabled 时降级为 `WScript.Shell.Popup` 中央对话框（8 秒自动关闭）。通知子进程必须**异步 spawn + 非 detached + 等待退出**：detached 在部分机器不执行脚本，spawnSync 宿主下 Popup 会被瞬间自动确认。
 
 **适用范围（超出范围请直接告知用户不支持，不要尝试适配）：**
 
@@ -88,7 +88,7 @@ Get-NetTCPConnection -LocalPort 9222,9223 -State Listen -ErrorAction SilentlyCon
 ```
 
 - `scheduleTime` 必须**晚于 10:00**：Qoder 积分每日 10:00（UTC+8）刷新；默认 10:30 已留余量。
-- 任务计划只在"用户已登录"时运行（GUI 程序 + 弹窗通知需要交互会话），这是预期行为。
+- 任务计划只在"用户已登录"时运行（GUI 程序 + toast 通知需要交互会话），这是预期行为。
 
 ### Step 5 单端实测（必做，两端各一次）
 
@@ -99,7 +99,7 @@ node runner.js --app=workbuddy
 node runner.js --app=qoder
 ```
 
-预期：客户端静默启动（任务栏可能短暂闪烁 1–2 秒，随后窗口被隐藏）→ 10–40 秒内输出结果 → 客户端自行退出 → 屏幕中央弹出结果对话框（8 秒自动关闭）。结束后确认进程清零：
+预期：客户端静默启动（任务栏可能短暂闪烁 1–2 秒，随后窗口被隐藏）→ 10–40 秒内输出结果 → 客户端自行退出 → 右下角弹出原生 toast（来源显示「自动签到」，并进通知中心；仅当原生通道失败时才降级为屏幕中央对话框）。结束后确认进程清零：
 
 ```powershell
 Get-Process WorkBuddy,'Qoder CN' -ErrorAction SilentlyContinue   # 应无输出
@@ -137,7 +137,7 @@ Get-ScheduledTaskInfo -TaskName 'AutoCheckin-Daily' | Select LastRunTime, LastTa
 `LastTaskResult = 0` 即通过；明细看 `logs\当天日期.log`。然后向用户说明：
 
 - 每天 10:30 自动执行，电脑当时没开则登录后自动补跑一次；
-- **首日（明天）留意弹窗是否为"领取成功 +100"**——安装当天通常两个都已手动领过，只能验证到 `already`，真实领取写路径以首日运行为准；
+- **首日（明天）留意 toast 是否为"领取成功 +100"**——安装当天通常两个都已手动领过，只能验证到 `already`，真实领取写路径以首日运行为准；
 - 卸载：`uninstall-task.ps1` 后删除目录即可。
 
 ## 3. 验证清单（交付给用户前逐项确认）
@@ -156,7 +156,8 @@ Get-ScheduledTaskInfo -TaskName 'AutoCheckin-Daily' | Select LastRunTime, LastTa
 | `CDP xxxx 在 90000ms 内未就绪` | 端口被占/被杀软拦截；换端口；检查 `--remote-debugging-port` 启动的客户端能否手动访问 `http://127.0.0.1:<端口>/json/version`（注意用 127.0.0.1 且绕过代理） |
 | Qoder `等待 CDP target 超时` / 找不到权益中心 | 客户端版本升级改了 UI；按第 5 节重新取证 DOM 定位 |
 | WorkBuddy `客户端未返回登录状态` | 先让用户手动打开客户端确认已登录；冷启动会话恢复慢时脚本已内置轮询 |
-| 没有弹窗 | 先看日志末尾有无「结果：」行：有结果行说明通知步骤已执行。Popup 由 user32 直接渲染、不受勿扰影响；任务计划仅在用户登录会话运行，锁屏/未登录时没有交互桌面属正常。注意通知子进程必须异步非 detached 启动（detached 在部分机器不执行脚本、spawnSync 宿主下弹窗会被瞬间自动确认） |
+| 没有 toast | 先看日志末尾有无「结果：」行：有结果行说明通知步骤已执行。检查 `HKCU:\Software\Classes\AppUserModelId\AutoCheckin.Daily` 是否存在（脚本会自愈重建，DisplayName 中文由 `-DisplayName` 参数传入，勿在 ps1 内写中文字面量）；系统「通知」总开关或专注助手可能抑制 toast，此时脚本应已降级为中央 Popup。注意通知子进程必须异步非 detached 启动（detached 在部分机器不执行脚本、spawnSync 宿主下弹窗会被瞬间自动确认） |
+| toast 来源名乱码 | ps1 被写入了中文字面量且文件无 BOM，PS 5.1 按 GBK 解析所致；中文名只能经命令行参数传入，保持脚本纯 ASCII |
 | 任务计划不触发 | 仅登录时运行；确认用户登录过、任务状态 Ready、动作的 node 路径有效 |
 
 ## 5. 客户端升级导致失效时的重新取证（仅在确实失败时做）
