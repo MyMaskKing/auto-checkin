@@ -98,7 +98,17 @@ async function openViaUi(browser, log) {
     if (!el) return '';
     const r = el.getBoundingClientRect();
     return JSON.stringify({ x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) });`;
-  await clickByEval(browser, sid, itemLocator, '「权益中心」菜单项');
+  // 冷启动时弹层可能在定位器就绪前自动收起：菜单项连续找不到就重新展开用户菜单，避免一轮重试到底必败
+  for (let round = 0; ; round++) {
+    try {
+      await clickByEval(browser, sid, itemLocator, '「权益中心」菜单项', 3);
+      break;
+    } catch (e) {
+      if (round >= 2) throw e;
+      await clickByEval(browser, sid, menuLocator, '用户菜单按钮', 2);
+      await sleep(1500);
+    }
+  }
   log('已点击权益中心，等待活动页加载…');
 
   const t = await browser.waitTarget((x) => GROWTH_RE.test(x.url || ''), 15000);

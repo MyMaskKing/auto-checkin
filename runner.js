@@ -5,7 +5,7 @@
 // 退出码：0 成功/已领取/跳过；2 登录态失效；3 其他失败（混合时取最严重）
 const fs = require('node:fs');
 const path = require('node:path');
-const { spawn, spawnSync } = require('node:child_process');
+const { spawn } = require('node:child_process');
 const { Cdp, sleep } = require('./lib/cdp');
 const win32 = require('./lib/win32');
 
@@ -49,15 +49,24 @@ const STATUS_ICON = {
 const SEVERITY = { claimed: 0, already: 0, skipped: 0, unauthenticated: 2, failed: 3 };
 
 function notify(title, body) {
-  if (!config.toast) return;
+  if (!config.toast) return Promise.resolve();
+  // 异步非 detached 并等待退出：detached 在部分机器不执行脚本，spawnSync 宿主下弹窗会被瞬间自动确认
   try {
-    spawn('powershell.exe', [
+    const child = spawn('powershell.exe', [
       '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
       '-File', path.join(ROOT, 'toast.ps1'),
       '-Title', title, '-Body', body,
-    ], { detached: true, windowsHide: true, stdio: 'ignore' }).unref();
+    ], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let err = '';
+    child.stderr.on('data', (d) => { err += d; });
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { try { child.kill(); } catch { /* ignore */ } resolve(); }, 20000);
+      child.on('exit', () => { clearTimeout(timer); if (err) log(`通知脚本报错：${err.trim().slice(0, 150)}`); resolve(); });
+      child.on('error', (e) => { clearTimeout(timer); log(`通知发送失败：${e.message}`); resolve(); });
+    });
   } catch (e) {
     log(`通知发送失败：${e.message}`);
+    return Promise.resolve();
   }
 }
 
@@ -173,15 +182,14 @@ async function runApp(key) {
       .map((r) => `${STATUS_ICON[r.status] || '•'} ${r.name}：${r.detail}`)
       .join('\n');
     log(`结果：${body.replace(/\n/g, ' | ')}`);
-    notify(title, body);
-    await sleep(3000); // 等 toast 进程发出
+    await notify(title, body);
   }
 
   const code = results.reduce((mx, r) => Math.max(mx, SEVERITY[r.status] ?? 3), 0);
   log(`===== 结束（退出码 ${code}）=====`);
   process.exit(code);
-})().catch((e) => {
+})().catch(async (e) => {
   log(`编排致命异常：${e.stack || e.message}`);
-  notify('每日签到异常', String(e.message || e).slice(0, 150));
+  await notify('每日签到异常', String(e.message || e).slice(0, 150));
   process.exit(3);
 });
