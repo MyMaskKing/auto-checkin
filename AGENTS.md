@@ -16,12 +16,12 @@ Windows 上的**每日无感签到工具**：定时静默启动 WorkBuddy 与 Qo
 
 ## 1. 硬性规则
 
-1. 只允许新增/修改：`config.json`、Windows 任务计划。不得改动 `runner.js`、`apps/*.js`、`lib/*`，除非第 5 节的失效取证证明接口确实变了。
+1. 只允许新增/修改：`config.json`、Windows 任务计划、（仅用户要求 attach 无感时）运行 `install-shortcuts.ps1` 改写本机快捷方式。不得改动 `runner.js`、`apps/*.js`、`lib/*`，除非第 5 节的失效取证证明接口确实变了。
 2. **禁止 `npm install` / 新增任何依赖**；禁止 git 操作。
 3. 所有文本文件保持 **UTF-8 无 BOM**。
 4. `*.ps1` 源码只能包含 **ASCII**（PowerShell 5.1 对无 BOM 脚本按 GBK 解析，中文会导致语法错误）；中文文案只能像 `toast.ps1` 那样通过命令行参数传入。不要向 ps1 中写中文注释或字符串。
 5. 杀进程只能按精确 PID（项目已实现 PID 差集 + `taskkill /PID /T`），**禁止按进程名批量结束**。
-6. 验证运行前，确认两个客户端**当前未运行**——运行中跳过（`skipped`）是设计行为，不是故障。
+6. 验证运行前，确认两个客户端**当前未运行**——`onRunning=skip`（默认）时运行中跳过（`skipped`）是设计行为，不是故障；`onRunning=attach` 时运行中且 CDP 端口可连会附加签到（不关闭进程），端口未开仍回退 `skipped`。
 7. 任何步骤失败：停下并把该步的命令输出如实告诉用户，不要猜测性重试超过 2 次。
 
 ## 2. 安装步骤
@@ -49,6 +49,7 @@ Get-ChildItem $roots -ErrorAction SilentlyContinue | Get-ItemProperty -ErrorActi
 
 - **WorkBuddy**：`DisplayIcon` 形如 `D:\xxx\WorkBuddy.exe,0` → 去掉结尾 `,0` 即 exe 全路径；
 - **Qoder CN**：`UninstallString` 形如 `"D:\xxx\Uninstall Qoder CN.exe" /currentuser` → 取其引号内路径的**所在目录**，拼 `Qoder CN.exe`。
+- **Qoder CN Launcher（attach 模式需要）**：Qoder 的开始菜单/桌面快捷方式指向 Launcher 而非真实 exe，默认位置 `%LOCALAPPDATA%\Qoder CN\Qoder CN Launcher\Qoder CN Launcher.exe`，`Test-Path` 确认后填入 config 的 `launcherPath`；实测 Launcher 会把命令行参数原样透传给真实客户端。
 
 注册表找不到时的回退：询问用户，或检查 `%LOCALAPPDATA%\Programs\Qoder CN\Qoder CN.exe`、`%LOCALAPPDATA%\Programs\WorkBuddy\WorkBuddy.exe` 等常见位置。最终必须 `Test-Path` 确认文件真实存在。
 
@@ -80,6 +81,7 @@ Get-NetTCPConnection -LocalPort 9222,9223 -State Listen -ErrorAction SilentlyCon
     },
     "qoder": {
       "exePath": "<Qoder CN.exe 全路径，反斜杠双写>",
+      "launcherPath": "<可选：Qoder CN Launcher.exe 全路径，attach 改写快捷方式用，无 Launcher 可省略>",
       "processName": "Qoder CN.exe",
       "cdpPort": 9223
     }
@@ -88,7 +90,17 @@ Get-NetTCPConnection -LocalPort 9222,9223 -State Listen -ErrorAction SilentlyCon
 ```
 
 - `scheduleTime` 必须**晚于 10:00**：Qoder 积分每日 10:00（UTC+8）刷新；默认 10:30 已留余量。
+- `onRunning`：客户端已在运行时的策略。`skip`（安装模板默认，直接跳过、不碰进程）；`attach`（先以 4s 短超时探测 `cdpPort`，可连则附加签到且**不关闭进程**，不可连回退 `skipped`）。attach 必须配合 Step 4.5 改写快捷方式，让客户端日常启动自带调试端口，否则与 skip 等价；仅当用户明确要求"客户端开着也要自动签"时才设为 attach。
 - 任务计划只在"用户已登录"时运行（GUI 程序 + toast 通知需要交互会话），这是预期行为。
+
+### Step 4.5 （仅 attach 模式）改写快捷方式，让日常入口自带调试端口
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install-shortcuts.ps1 -DryRun  # 先预览，不改写
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install-shortcuts.ps1          # 正式改写，幂等
+```
+
+脚本扫描桌面/开始菜单/任务栏/启动文件夹，对目标匹配 `exePath`（Qoder 另匹配 `launcherPath`）的快捷方式追加 `--remote-debugging-port=<cdpPort> --remote-allow-origins=*`；按路径精确匹配，**不会触碰 `Qoder CN IDE` 的快捷方式**。改写后立即重跑一次，应全部输出 `KEEP`、`failed=0 conflict=0`；公共目录项若报 FAIL 多为权限问题，如实告知用户。已知边界：直接双击 exe、客户端自更新后的自动重启不走快捷方式，实例不带端口，定时任务回退 skipped；升级覆盖快捷方式后重跑本脚本即可修复。
 
 ### Step 5 单端实测（必做，两端各一次）
 
@@ -111,7 +123,7 @@ Get-Process WorkBuddy,'Qoder CN' -ErrorAction SilentlyContinue   # 应无输出
 |---|---|---|
 | `claimed` | 领取成功（未领时才会出现） | 通过 |
 | `already` | 今日已领取，未发任何写请求 | 通过 |
-| `skipped` | 客户端正在运行 | 让用户退出客户端后重跑 |
+| `skipped` | 客户端正在运行（skip 策略）；或 attach 模式下调试端口未开放 | 前者让用户退出客户端后重跑；后者给快捷方式加调试参数，或维持跳过 |
 | `unauthenticated`（退出码 2） | 登录态失效 | 让用户手动打开对应客户端登录，再重跑 |
 | `failed`（退出码 3） | CDP/接口/元素定位失败 | 看 `logs\当天日期.log`，按第 5 节排查 |
 
@@ -145,6 +157,8 @@ Get-ScheduledTaskInfo -TaskName 'AutoCheckin-Daily' | Select LastRunTime, LastTa
 - [ ] `node runner.js --app=workbuddy` 退出码 0，结果 already/claimed，进程清零
 - [ ] `node runner.js --app=qoder` 退出码 0，结果 already/claimed，进程清零
 - [ ] 两个客户端正在运行时执行，结果为 skipped 且用户原有进程不受影响
+- [ ] （仅 `onRunning=attach`）客户端带调试端口运行时执行：结果 already/claimed、退出码 0 且进程仍存活；普通方式运行（端口未开）时约 4s 内 skipped，detail 注明未开放调试端口
+- [ ] （仅 `onRunning=attach`）`install-shortcuts.ps1` 重跑全部 KEEP、无 FAIL/CONFLICT；从改写后的快捷方式启动客户端，`http://127.0.0.1:<cdpPort>/json/version` 可访问
 - [ ] 任务计划存在、`NextRunTime` 为明天 10:30、手动触发 `LastTaskResult=0`
 - [ ] 未安装任何 npm 依赖（项目内不应出现 node_modules）
 - [ ] `config.json` 内路径在本机真实存在

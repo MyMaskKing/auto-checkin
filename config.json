@@ -3,7 +3,7 @@
   "readyTimeoutSec": 90,
   "graceCloseSec": 20,
   "hidePollMs": 300,
-  "onRunning": "skip",
+  "onRunning": "attach",
   "toast": true,
   "apps": {
     "workbuddy": {
@@ -13,6 +13,7 @@
     },
     "qoder": {
       "exePath": "E:\\Dev_Software\\Qoder CN\\Qoder CN.exe",
+      "launcherPath": "C:\\Users\\IT\\AppData\\Local\\Qoder CN\\Qoder CN Launcher\\Qoder CN Launcher.exe",
       "processName": "Qoder CN.exe",
       "cdpPort": 9223
     }

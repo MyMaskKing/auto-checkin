@@ -15,8 +15,22 @@
 
 ## 进程安全策略
 
-- 运行前检测到客户端**已在运行**：默认直接跳过，**不重启、不关闭**任何用户进程，通知里说明"运行中已跳过"。
-- 只关闭脚本自己启动的实例：按启动前后 PID 差集逐个 `taskkill /PID /T`，**不使用按进程名批量结束**。
+- 运行前检测到客户端**已在运行**，按 `config.json` 顶层 `onRunning` 策略处理：
+  - `skip`（默认值/未知值）：直接跳过，**不重启、不关闭**任何用户进程，通知里说明"运行中已跳过"。
+  - `attach`：用 4 秒短超时探测该客户端的 CDP 端口——端口已开放则直接附加签到，结束只断开调试连接、**不关闭进程**；端口未开放（客户端以普通方式启动）则回退跳过，通知中注明"未开放调试端口"。
+  - CDP 端口是进程启动级开关、运行中无法补开，启用 attach 需让客户端**日常就带调试参数启动**。一键改写本机全部相关快捷方式（桌面/开始菜单/任务栏/启动文件夹，幂等，可先 `-DryRun` 预览）：
+    ```powershell
+    powershell -ExecutionPolicy Bypass -File install-shortcuts.ps1 -DryRun
+    powershell -ExecutionPolicy Bypass -File install-shortcuts.ps1
+    ```
+    脚本按 `config.json` 中各 app 的 `exePath`（Qoder 另含可选 `launcherPath`）匹配快捷方式目标并追加参数；Qoder CN 的快捷方式指向 Launcher（`Qoder CN Launcher.exe`），实测 Launcher 会把命令行参数原样透传给真实客户端。也可手动把快捷方式「目标」改为（端口与 `config.json` 一致）：
+    ```powershell
+    "E:\Dev_Software\WorkBuddy\WorkBuddy.exe" --remote-debugging-port=9222 --remote-allow-origins=*
+    "C:\Users\IT\AppData\Local\Qoder CN\Qoder CN Launcher\Qoder CN Launcher.exe" --remote-debugging-port=9223 --remote-allow-origins=*
+    ```
+    调试端口仅监听 127.0.0.1。附加期间 WorkBuddy 为纯后台 RPC 无界面打扰；Qoder 需模拟点击打开「权益中心」，会在当前窗口短暂抢焦点并弹出活动页。
+  - 已知边界：直接双击 exe、客户端自更新后的自动重启不走快捷方式，此时实例不带调试端口，定时任务仍回退 skipped（通知中注明）；客户端升级若覆盖了快捷方式，重跑一次 `install-shortcuts.ps1` 即可修复。
+- 只关闭脚本自己启动的实例：按启动前后 PID 差集逐个 `taskkill /PID /T`，**不使用按进程名批量结束**；attach 路径不做任何进程结束操作。
 - 签到窗口由 Win32 守护高频隐藏，启动期间任务栏最多短暂闪烁。
 
 ## 手动运行
@@ -52,6 +66,7 @@ powershell -ExecutionPolicy Bypass -File uninstall-task.ps1         # 卸载
 | `lib/cdp.js` | 零依赖 CDP 客户端（Node 22 内置 fetch/WebSocket） |
 | `lib/win32.js`、`lib/proc.ps1`、`lib/hide-windows.ps1` | 进程快照、进程树结束、窗口隐藏守护 |
 | `toast.ps1` | 结果通知：WinRT 原生 toast 优先（AUMID `AutoCheckin.Daily` 每次运行幂等自注册，未注册 AUMID 的 toast 会被静默丢弃）；失败降级 `WScript.Shell.Popup` 对话框 |
+| `install-shortcuts.ps1` | 幂等改写本机指向两客户端的快捷方式，追加 CDP 调试参数（`onRunning=attach` 的无感配套，支持 `-DryRun`；Qoder 经 `launcherPath` 匹配 Launcher 快捷方式） |
 | `config.json` | 客户端路径、CDP 端口、超时、`onRunning` 策略 |
 | `logs/YYYY-MM-DD.log` | 每日运行日志 |
 
@@ -63,3 +78,4 @@ powershell -ExecutionPolicy Bypass -File uninstall-task.ps1         # 卸载
 | 通知"CDP 未就绪" | 本机安全软件拦截调试端口；确认端口（9222/9223）未被占用 |
 | Qoder 活动页改版导致失败 | 失败会直接报错、不会乱点；更新 `apps/qoder.js` 中的定位常量 |
 | 没收到通知 | 先看 `logs/` 末尾有无「结果：」行。原生 toast 走通知平台（受系统通知开关/专注助手影响），被禁用时脚本自动降级中央 Popup（user32 渲染，不受勿扰影响）；任务仅在用户登录会话运行，锁屏/未登录时无交互桌面属正常 |
+| attach 模式仍提示"未开放调试端口" | 该实例不是从改写后的快捷方式启动的（如直接双击 exe、客户端自更新重启）。重跑 `install-shortcuts.ps1` 后彻底退出客户端再从快捷方式打开；`Qoder CN IDE` 的快捷方式不会被改写，也不是签到目标 |

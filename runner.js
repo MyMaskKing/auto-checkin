@@ -81,12 +81,38 @@ async function runApp(key) {
   const procName = appCfg.processName || adapter.meta.processName;
   const t0 = Date.now();
 
-  // 1) 运行中 → 默认跳过，绝不触碰用户进程
+  // 1) 运行中 → onRunning=skip（默认）直接跳过；attach 则尝试附加已有实例的 CDP。两条路径都绝不重启/关闭用户进程
   const before = win32.snapshot([procName]);
   const existing = before.filter((p) => win32.pathEq(p.path, exePath));
   if (existing.length > 0) {
-    log(`[${name}] 检测到客户端正在运行（PID ${existing.map((p) => p.pid).join(',')}），跳过，不重启不关闭`);
-    return { key, name, status: 'skipped', detail: '客户端运行中，已跳过自动签到' };
+    log(`[${name}] 检测到客户端正在运行（PID ${existing.map((p) => p.pid).join(',')}）`);
+    if (config.onRunning !== 'attach') {
+      log(`[${name}] 跳过，不重启不关闭`);
+      return { key, name, status: 'skipped', detail: '客户端运行中，已跳过自动签到' };
+    }
+
+    // attach：短探测调试端口。未开放（客户端普通方式启动）→ 回退 skipped；可连 → 复用适配器签到，结束只断 CDP 连接
+    let browser = null;
+    try {
+      browser = await Cdp.waitReady(port, 4000);
+    } catch (e) {
+      log(`[${name}] 调试端口 ${port} 不可连，回退跳过：${String(e.message || e).slice(0, 120)}`);
+      return { key, name, status: 'skipped', detail: '客户端运行中且未开放调试端口，已跳过', costMs: Date.now() - t0 };
+    }
+    let result;
+    try {
+      result = await adapter.signIn(browser, appCfg, (m) => log(`[${name}] ${m}`), { statusOnly: args.status });
+      log(`[${name}] ${result.status}：${result.detail}${result.gained ? `（${result.gained}）` : ''}`);
+    } catch (e) {
+      result = { status: 'failed', detail: String(e.message || e).slice(0, 200) };
+      log(`[${name}] 附加签到异常：${result.detail}`);
+    } finally {
+      browser.close(); // 只断开调试连接，不关闭客户端进程
+    }
+    result.key = key;
+    result.name = name;
+    result.costMs = Date.now() - t0;
+    return result;
   }
 
   if (!fs.existsSync(exePath)) {
